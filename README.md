@@ -8,6 +8,19 @@ Adaptive AI tutor that teaches strictly from a student's own course materials, d
 | Backend API | Python, FastAPI | health check; API of epics E1–E8 in stage 2 |
 | Frontend | React + TypeScript + Vite | stage 3 |
 
+## For the database review
+
+| What | Where |
+| --- | --- |
+| Database documentation (start here) | [docs/database.md](docs/database.md) |
+| Data dictionary: tables, columns, types, keys | [docs/data-dictionary.md](docs/data-dictionary.md) |
+| Logical schema (ER diagram) | [docs/er-diagram.png](docs/er-diagram.png) |
+| DDL script (generated from the migrations) | [db/schema.sql](db/schema.sql) |
+| Migrations — the schema is built only by them | [backend/alembic/versions/](backend/alembic/versions/) |
+| Roles and databases | [db/init/01-roles-and-databases.sh](db/init/01-roles-and-databases.sh) |
+| Tests on a real PostgreSQL | [backend/tests/](backend/tests/) |
+| How to run | section "Quick start" below |
+
 ## Quick start (Docker Desktop must be running)
 
 ```bash
