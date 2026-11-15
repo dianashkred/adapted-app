@@ -1,5 +1,3 @@
-"""Learner model (topic status per learner and topic) and the log of adaptation decisions."""
-
 import uuid
 from datetime import datetime
 
@@ -13,12 +11,6 @@ from app.db.enums import DifficultyLevel, ReviewReason, TopicStatus, pg_enum
 
 
 class TopicState(Base):
-    """Status, level and counters of one learner for one topic.
-
-    The counters are a documented denormalisation of ``attempt``: they are maintained by the
-    trigger ``trg_attempt_apply`` in the same transaction as the answer.
-    """
-
     __tablename__ = "topic_state"
 
     learner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("learner.id", ondelete="CASCADE"), primary_key=True)
@@ -44,8 +36,6 @@ class TopicState(Base):
 
 
 class AdaptationEvent(CreatedAtMixin, Base):
-    """Every decision of the tutor is logged so that it can be explained and analysed (US-12)."""
-
     __tablename__ = "adaptation_event"
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
@@ -63,12 +53,6 @@ class AdaptationEvent(CreatedAtMixin, Base):
 
 
 class ReviewItem(Base):
-    """A question on the learner's review list (decision 0002, rule 3); maintained by trg_attempt_review_list.
-
-    Added when an answer is incorrect or not sure, due one day later, resolved by a later correct answer
-    given with confidence ``sure``. The attempt links use SET NULL: they are provenance only.
-    """
-
     __tablename__ = "review_item"
 
     learner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("learner.id", ondelete="CASCADE"), primary_key=True)

@@ -1,8 +1,3 @@
-"""Generates docs/data-dictionary.md from the ORM models (types, keys, constraints) and the descriptions.
-
-    python -m scripts.generate_data_dictionary
-"""
-
 from pathlib import Path
 
 from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint

@@ -1,22 +1,3 @@
-"""Demo / test data that shows the application working and covers edge cases.
-
-Runs as the APPLICATION role (adapted_app), which proves the app needs no extra rights.
-Idempotent: does nothing if accounts already exist.
-
-    python -m scripts.seed_demo
-
-Edge cases included (see docs/database.md, section 9):
-  * shared evaluation corpus course without owner; private course with no documents
-  * documents in every status: ready, processing, failed (scanned PDF without text layer)
-  * knowledge checks ending in every way: success sequence, two errors in a row, question limit,
-    stopped by the learner after one answer (Not checked), still in progress
-  * experiment participants in mode A, mode B and before mode assignment; pre-/post-tests
-  * chat with sources and an honest refusal; guided lesson in progress
-  * decision 0002: answers with every confidence value; review items open and resolved; a finished
-    topic quiz and a finished revision quiz; a learner with dark theme and revision reminders off;
-    3 simulated learners (no account) with ground-truth gaps whose checks give TP, FP and FN
-"""
-
 import hashlib
 import random
 from datetime import datetime, timedelta, timezone
@@ -65,8 +46,6 @@ def question(conn, section, level, n, kind="multiple_choice"):
 
 
 class Bank:
-    """Questions of one topic by level, handed out without repeating inside a quiz."""
-
     def __init__(self, conn, topic):
         self.by_level = {lvl: [question(conn, topic, lvl, f"{lvl[:1]}{i}") for i in range(6)]
                          for lvl in ("basic", "intermediate", "advanced")}
@@ -76,10 +55,6 @@ class Bank:
 
 
 def run_check(conn, learner, topic, bank: Bank, answers: list[bool], stop=False, confidence: list[str] | None = None):
-    """Start a check and answer it; the DATABASE decides levels and when the check ends.
-
-    ``confidence`` gives the learner's confidence per answer (decision 0002); default 'sure'.
-    """
     quiz = one(conn, "SELECT start_check(:l, :t)", l=learner, t=topic)
     used = []
     confidence = confidence or ["sure"] * len(answers)
@@ -101,7 +76,6 @@ def run_check(conn, learner, topic, bank: Bank, answers: list[bool], stop=False,
 
 
 def practice(conn, learner, kind, topic, questions, answers: list[tuple[bool, str]]):
-    """A topic quiz or revision quiz (decision 0002): multiple choice, completed by the database at the limit."""
     quiz = one(conn, "INSERT INTO quiz (learner_id, section_id, kind, max_questions) VALUES (:l, :s, :k, :m) RETURNING id",
                l=learner, s=topic, k=kind, m=len(questions))
     for pos, (q, (correct, conf)) in enumerate(zip(questions, answers), start=1):
@@ -116,19 +90,18 @@ def practice(conn, learner, kind, topic, questions, answers: list[tuple[bool, st
 
 def main(url: str | None = None) -> None:
     engine = create_engine(url or get_settings().database_url)
-    with engine.begin() as conn:            # everything or nothing
+    with engine.begin() as conn:
         if one(conn, "SELECT count(*) FROM account"):
             print("demo data already present — nothing to do")
             return
 
         admin_acc, _ = account(conn, "admin@adapted.demo", role="admin")
-        _, alice = account(conn, "alice@adapted.demo")                       # ordinary student (adaptive)
-        _, ben = account(conn, "ben@adapted.demo", participant=True, mode="plain_rag")   # mode A
-        _, chloe = account(conn, "chloe@adapted.demo", participant=True, mode="adaptive")  # mode B
-        _, dan = account(conn, "dan@adapted.demo", participant=True)        # before the pre-test
+        _, alice = account(conn, "alice@adapted.demo")
+        _, ben = account(conn, "ben@adapted.demo", participant=True, mode="plain_rag")
+        _, chloe = account(conn, "chloe@adapted.demo", participant=True, mode="adaptive")
+        _, dan = account(conn, "dan@adapted.demo", participant=True)
         eva_acc, eva = account(conn, "eva@adapted.demo")
 
-        # Evaluation corpus: shared course, no owner.
         corpus = one(conn, "INSERT INTO course (owner_account_id, title, visibility) VALUES (NULL, 'The Modern JavaScript Tutorial — Part 1', 'shared') RETURNING id")
         doc = one(conn, """INSERT INTO document (course_id, file_name, mime_type, size_bytes, sha256, storage_path, status, page_count, processed_at)
                            VALUES (:c, 'javascript-part-1.pdf', 'application/pdf', 8421337, :h, :p, 'ready', 697, now()) RETURNING id""",
@@ -151,7 +124,6 @@ def main(url: str | None = None) -> None:
                     conn.execute(text("INSERT INTO chunk (section_id, position, content, token_count, page, embedding) VALUES (:s, :p, :c, :n, :pg, CAST(:e AS vector))"),
                                  dict(s=sec, p=k, c=f"{sub}: demo passage {k + 1} of the evaluation corpus.", n=rng.randint(200, 380), pg=i + 1, e=vec()))
 
-        # Private courses with edge cases.
         empty_course = one(conn, "INSERT INTO course (owner_account_id, title) VALUES (:o, 'History notes (no files yet)') RETURNING id", o=eva_acc)
         bio = one(conn, "INSERT INTO course (owner_account_id, title) VALUES (:o, 'Biology — cell structure') RETURNING id", o=eva_acc)
         conn.execute(text("""INSERT INTO document (course_id, file_name, mime_type, size_bytes, sha256, status, error_message) VALUES
@@ -163,19 +135,15 @@ def main(url: str | None = None) -> None:
         fund, objs, dtypes, funcs = (topics[t] for t in topics)
         b = list(banks.values())
 
-        # Knowledge checks: every way a check can end.
-        run_check(conn, alice, fund, b[0], [True, True, True])                       # I, A, A -> success sequence, mastered
-        alice_objs = run_check(conn, alice, objs, b[1], [False, False])              # two errors -> gap, basic chapter linked
-        run_check(conn, alice, dtypes, b[2], [False, True, True, True, True],        # one error then success;
-                  confidence=["sure", "not_sure", "guessing", "sure", "sure"])       # every confidence value
-        run_check(conn, ben, fund, b[0], [True, False, True, True, False, True])     # mode A: fixed level, ends at limit (4/6)
-        run_check(conn, chloe, fund, b[0], [True, False, True, False, True, True])   # mode B: limit reached, last two correct
-        run_check(conn, chloe, objs, b[1], [True], stop=True)                        # stopped after 1 answer -> not checked
-        run_check(conn, alice, funcs, b[3], [True])                                  # still in progress
+        run_check(conn, alice, fund, b[0], [True, True, True])
+        alice_objs = run_check(conn, alice, objs, b[1], [False, False])
+        run_check(conn, alice, dtypes, b[2], [False, True, True, True, True],
+                  confidence=["sure", "not_sure", "guessing", "sure", "sure"])
+        run_check(conn, ben, fund, b[0], [True, False, True, True, False, True])
+        run_check(conn, chloe, fund, b[0], [True, False, True, False, True, True])
+        run_check(conn, chloe, objs, b[1], [True], stop=True)
+        run_check(conn, alice, funcs, b[3], [True])
 
-        # Review session (US-20): two answers on weak topics. The first question was answered wrongly in the
-        # Objects check (open review item); now it is correct and sure -> the item is resolved. The second is
-        # correct but "not sure" -> a new open review item (reason unsure).
         missed = one(conn, "SELECT question_id FROM attempt WHERE quiz_id = :z AND NOT is_correct ORDER BY id LIMIT 1", z=alice_objs)
         review = one(conn, "INSERT INTO quiz (learner_id, kind, max_questions) VALUES (:l, 'review', 5) RETURNING id", l=alice)
         for pos, (q, conf) in enumerate([(missed, "sure"), (b[2].by_level["basic"][5], "not_sure")], start=1):
@@ -185,27 +153,18 @@ def main(url: str | None = None) -> None:
                          dict(l=alice, q=q, z=review, conf=conf))
         conn.execute(text("UPDATE quiz SET status = 'completed', ended_at = now() WHERE id = :z"), dict(z=review))
 
-        # Topic quiz (decision 0002, rule 5): alice practises "JavaScript Fundamentals" after her check;
-        # 15 multiple-choice questions, levels mixed; completed automatically by the database at the 15th answer.
         mixed = [q for i in range(6) for q in (b[0].by_level["basic"][i], b[0].by_level["intermediate"][i], b[0].by_level["advanced"][i])]
         practice(conn, alice, "topic_quiz", fund, mixed[:15],
                  [(True, "sure")] * 10 + [(False, "sure"), (True, "guessing"), (False, "not_sure"), (True, "sure"), (True, "not_sure")])
 
-        # Revision quiz (rule 6): chloe (mode B) revises earlier topics; 10 questions, completed automatically.
         earlier = [b[0].by_level["basic"][i] for i in range(5)] + [b[1].by_level["intermediate"][i] for i in range(5)]
         practice(conn, chloe, "revision", None, earlier,
                  [(True, "sure")] * 6 + [(False, "guessing"), (True, "not_sure"), (False, "sure"), (True, "sure")])
 
-        # Preferences (rule 8) and last visit (absence rule): eva prefers dark mode and no revision reminders;
-        # alice was last seen 9 days ago, so a revision quiz would be offered for the absence.
         conn.execute(text("UPDATE learner SET ui_theme = 'dark', revision_reminders = false, last_seen_at = now() WHERE id = :l"), dict(l=eva))
         conn.execute(text("UPDATE learner SET last_seen_at = now() - interval '9 days' WHERE id = :l"), dict(l=alice))
         conn.execute(text("UPDATE learner SET last_seen_at = now() WHERE id IN (:b, :c)"), dict(b=ben, c=chloe))
 
-        # Simulated profiles (rule 9, US-18, KPI K2): no account; ground-truth gaps vs the status the checks find.
-        #   sim 1: truth {Objects};  checks Fundamentals (mastered -> TN) and Objects (gap -> TP)
-        #   sim 2: truth {};         check Data types gives a gap -> FP
-        #   sim 3: truth {Advanced functions}; the check finds it mastered -> FN
         for truth, checks in (([objs], [(fund, 0, [True, True, True]), (objs, 1, [False, False])]),
                               ([], [(dtypes, 2, [False, False])]),
                               ([funcs], [(funcs, 3, [True, True, True])])):
@@ -215,7 +174,6 @@ def main(url: str | None = None) -> None:
             for topic, bank_no, answers in checks:
                 run_check(conn, sim, topic, b[bank_no], answers)
 
-        # Experiment: fixed pre-/post-tests (curated free-text questions), identical for A and B.
         for kind in ("pre_test", "post_test"):
             form = one(conn, "INSERT INTO test_form (course_id, kind, title) VALUES (:c, :k, :t) RETURNING id",
                        c=corpus, k=kind, t=f"{kind.replace('_', '-').title()} — JavaScript Part 1")
@@ -235,7 +193,6 @@ def main(url: str | None = None) -> None:
                                  dict(l=learner, q=q, z=quiz, c=pos <= score))
                 conn.execute(text("UPDATE quiz SET status = 'completed', ended_at = now() WHERE id = :z"), dict(z=quiz))
 
-        # Chats: free question with sources, an honest refusal, a guided lesson in progress.
         chunk_ids = conn.execute(text("SELECT id FROM chunk ORDER BY id LIMIT 3")).scalars().all()
         sess = one(conn, "INSERT INTO chat_session (learner_id, section_id, mode) VALUES (:l, :s, 'free_question') RETURNING id", l=alice, s=fund)
         conn.execute(text("INSERT INTO message (session_id, role, content) VALUES (:s, 'user', 'What is the difference between let and var?')"), dict(s=sess))

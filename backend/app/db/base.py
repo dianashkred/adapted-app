@@ -1,5 +1,3 @@
-"""Declarative base with a naming convention, so constraint names are stable in migrations."""
-
 from datetime import datetime
 
 from sqlalchemy import DateTime, MetaData, func

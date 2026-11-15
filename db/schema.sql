@@ -6,7 +6,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict XGMFLCdQE6RYBhqSkSZ5jN19iGMIuaJ0RpiW3vrRHd4MvP9oIhMHZ2WxBGLVuPQ
+\restrict zpZLLtquiEcLH7dcNCvTxJQIKkQ2NB8707Pc1WvueYAsInm4CfzwBPTqW8dCLao
 
 -- Dumped from database version 16.16 (Debian 16.16-1.pgdg12+1)
 -- Dumped by pg_dump version 16.16 (Debian 16.16-1.pgdg12+1)
@@ -317,7 +317,6 @@ END $$;
 CREATE FUNCTION public.mask_email(p_email text) RETURNS text
     LANGUAGE sql IMMUTABLE PARALLEL SAFE
     AS $$
-  -- 'diana@example.com' -> 'd***@example.com'
   SELECT CASE WHEN position('@' IN p_email) > 1
               THEN left(p_email, 1) || '***' || substr(p_email, position('@' IN p_email))
               ELSE '***' END
@@ -331,7 +330,6 @@ $$;
 CREATE FUNCTION public.next_level(p_level public.difficulty_level, p_correct boolean) RETURNS public.difficulty_level
     LANGUAGE sql IMMUTABLE PARALLEL SAFE
     AS $$
-  -- US-12: correct -> one level up (max Advanced); incorrect -> one level down (min Basic).
   SELECT CASE
            WHEN p_correct AND p_level = 'basic'        THEN 'intermediate'::difficulty_level
            WHEN p_correct                              THEN 'advanced'::difficulty_level
@@ -381,10 +379,9 @@ BEGIN
   END IF;
   SELECT * INTO l FROM learner WHERE id = p_learner;
   IF NOT FOUND OR NOT l.revision_reminders OR l.experiment_mode IS NOT DISTINCT FROM 'plain_rag' THEN
-    RETURN;                                             -- switched off, or mode A (rule 7)
+    RETURN;
   END IF;
 
-  -- Topics of the course in course order; "studied" = a check gave Gap or Mastered.
   WITH topics AS (
     SELECT row_number() OVER (ORDER BY d.uploaded_at, d.id, s.position) AS n,
            coalesce(t.status, 'not_checked') <> 'not_checked'            AS studied
@@ -398,21 +395,17 @@ BEGIN
     FROM topics;
 
   IF NOT v_any_studied THEN
-    RETURN;                                             -- nothing to revise yet
+    RETURN;
   END IF;
 
-  -- (b) return after a long absence
   IF l.last_seen_at IS NOT NULL AND l.last_seen_at < now() - make_interval(days => p_absence_days) THEN
     offered := true; reason := 'absence';
     RETURN;
   END IF;
 
-  -- (a) before a new topic whose earlier topics have all been studied
-  --     (the first not-studied topic in course order is not the first topic) ...
   IF v_first_open IS NULL OR v_first_open = 1 THEN
     RETURN;
   END IF;
-  -- ... unless a revision quiz of this course was already started after the last check result.
   SELECT max(z.ended_at) INTO v_last_result
     FROM quiz z JOIN section s ON s.id = z.section_id JOIN document d ON d.id = s.document_id
    WHERE z.learner_id = p_learner AND z.kind = 'check' AND z.outcome IN ('gap', 'mastered') AND d.course_id = p_course;
@@ -448,14 +441,13 @@ BEGIN
   SELECT id INTO v_quiz FROM quiz
    WHERE learner_id = p_learner AND section_id = p_topic AND kind = 'check' AND status = 'in_progress';
   IF FOUND THEN
-    RETURN v_quiz;                      -- resume the open check instead of creating a second one
+    RETURN v_quiz;
   END IF;
 
   SELECT experiment_mode INTO v_mode FROM learner WHERE id = p_learner;
   INSERT INTO quiz (learner_id, section_id, kind, max_questions)
   VALUES (p_learner, p_topic, 'check', 6) RETURNING id INTO v_quiz;
 
-  -- The first question of a check is always Intermediate.
   INSERT INTO topic_state (learner_id, section_id, current_level)
   VALUES (p_learner, p_topic, 'intermediate')
   ON CONFLICT (learner_id, section_id) DO UPDATE SET current_level = 'intermediate';
@@ -490,7 +482,6 @@ CREATE FUNCTION public.topic_of(p_section uuid) RETURNS uuid
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
     AS $$
-  -- SECURITY DEFINER: the analytics views call it for analysts who cannot read "section" directly.
   WITH RECURSIVE up AS (
     SELECT id, parent_id FROM section WHERE id = p_section
     UNION ALL
@@ -507,8 +498,6 @@ $$;
 CREATE FUNCTION public.topic_status_from_answers(p_total integer, p_correct integer, p_last_two_correct_high boolean) RETURNS public.topic_status
     LANGUAGE sql IMMUTABLE PARALLEL SAFE
     AS $$
-  -- US-11: fewer than 2 answers -> not checked; >= 75 % correct, or the last two answers correct
-  -- at Intermediate/Advanced -> mastered; otherwise -> gap.
   SELECT CASE
            WHEN p_total < 2 THEN 'not_checked'::topic_status
            WHEN p_correct::numeric / p_total >= 0.75 OR p_last_two_correct_high THEN 'mastered'::topic_status
@@ -533,12 +522,9 @@ DECLARE
 BEGIN
   IF NEW.quiz_id IS NOT NULL THEN
     SELECT * INTO q FROM quiz WHERE id = NEW.quiz_id;
-    -- Pre- and post-tests measure learning; they must not change the learner model.
     IF q.kind IN ('pre_test', 'post_test') THEN
       RETURN NULL;
     END IF;
-    -- Decision 0002: topic and revision quizzes never change topic status, level or the
-    -- knowledge-check counters; they are completed automatically at max_questions.
     IF q.kind IN ('topic_quiz', 'revision') THEN
       IF (SELECT count(*) FROM attempt WHERE quiz_id = q.id) >= q.max_questions THEN
         UPDATE quiz SET status = 'completed', ended_at = now() WHERE id = q.id;
@@ -550,7 +536,6 @@ BEGIN
   v_topic := topic_of((SELECT section_id FROM question WHERE id = NEW.question_id));
   SELECT experiment_mode INTO v_mode FROM learner WHERE id = NEW.learner_id;
 
-  -- 1. Counters of the learner model (same transaction as the answer).
   INSERT INTO topic_state AS t (learner_id, section_id, attempts_count, correct_count, consecutive_errors, last_attempt_at)
   VALUES (NEW.learner_id, v_topic, 1, NEW.is_correct::int, (NOT NEW.is_correct)::int, NEW.created_at)
   ON CONFLICT (learner_id, section_id) DO UPDATE
@@ -560,12 +545,11 @@ BEGIN
          last_attempt_at    = NEW.created_at;
 
   IF NEW.quiz_id IS NULL OR q.kind <> 'check' THEN
-    RETURN NULL;                         -- reviews and free answers only update the counters
+    RETURN NULL;
   END IF;
 
   s := check_summary(NEW.quiz_id);
 
-  -- 2. Adaptation (mode B and ordinary students). Mode A (plain RAG) keeps the level fixed.
   IF v_mode IS DISTINCT FROM 'plain_rag' THEN
     v_new := next_level(NEW.level, NEW.is_correct);
     IF v_new <> NEW.level THEN
@@ -575,7 +559,6 @@ BEGIN
               CASE WHEN NEW.is_correct THEN 'level_up' ELSE 'level_down' END, NEW.level, v_new);
     END IF;
 
-    -- 3. Early end of the check.
     IF s.last_two_wrong THEN
       INSERT INTO adaptation_event (learner_id, section_id, attempt_id, quiz_id, rule, from_level, to_level)
       VALUES (NEW.learner_id, v_topic, NEW.id, NEW.quiz_id, 'basic_chapter_link', NEW.level, 'basic');
@@ -588,7 +571,6 @@ BEGIN
     END IF;
   END IF;
 
-  -- 4. Question limit (both modes).
   IF s.total >= q.max_questions THEN
     PERFORM finish_check(NEW.quiz_id, 'question_limit');
   END IF;
@@ -620,14 +602,14 @@ DECLARE
   v_reason review_reason;
 BEGIN
   IF NEW.quiz_id IS NULL THEN
-    RETURN NULL;                                        -- answers outside a quiz are not covered
+    RETURN NULL;
   END IF;
   SELECT kind INTO v_kind FROM quiz WHERE id = NEW.quiz_id;
   IF v_kind NOT IN ('check', 'review', 'topic_quiz', 'revision') THEN
-    RETURN NULL;                                        -- pre-/post-tests never touch the review list
+    RETURN NULL;
   END IF;
   IF EXISTS (SELECT 1 FROM learner WHERE id = NEW.learner_id AND experiment_mode = 'plain_rag') THEN
-    RETURN NULL;                                        -- adaptive feature: not for mode A
+    RETURN NULL;
   END IF;
 
   v_reason := CASE WHEN NOT NEW.is_correct                      THEN 'incorrect'::review_reason
@@ -642,7 +624,7 @@ BEGIN
            times_added     = r.times_added + 1,
            due_at          = EXCLUDED.due_at,
            resolved_at     = NULL;
-  ELSIF NEW.confidence = 'sure' THEN                    -- correct and sure: the item leaves the list
+  ELSIF NEW.confidence = 'sure' THEN
     UPDATE review_item
        SET resolved_at = NEW.created_at, last_attempt_id = NEW.id
      WHERE learner_id = NEW.learner_id AND question_id = NEW.question_id AND resolved_at IS NULL;
@@ -679,12 +661,10 @@ BEGIN
   IF v_answered >= q.max_questions THEN
     RAISE EXCEPTION 'quiz % already has % answers (limit)', q.id, q.max_questions USING ERRCODE = 'check_violation';
   END IF;
-  -- Decision 0002, rules 5-6: topic and revision quizzes are multiple-choice only.
   IF q.kind IN ('topic_quiz', 'revision')
      AND (SELECT kind FROM question WHERE id = NEW.question_id) <> 'multiple_choice' THEN
     RAISE EXCEPTION 'a % accepts only multiple-choice questions', q.kind USING ERRCODE = 'check_violation';
   END IF;
-  -- Decision 0002, rule 1: confidence after every answer, except in pre-/post-tests.
   IF q.kind IN ('pre_test', 'post_test') THEN
     IF NEW.confidence IS NOT NULL THEN
       RAISE EXCEPTION 'confidence is not recorded in pre- and post-tests' USING ERRCODE = 'check_violation';
@@ -2796,5 +2776,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA public GRANT INSERT,DELETE,UPD
 -- PostgreSQL database dump complete
 --
 
-\unrestrict XGMFLCdQE6RYBhqSkSZ5jN19iGMIuaJ0RpiW3vrRHd4MvP9oIhMHZ2WxBGLVuPQ
+\unrestrict zpZLLtquiEcLH7dcNCvTxJQIKkQ2NB8707Pc1WvueYAsInm4CfzwBPTqW8dCLao
 

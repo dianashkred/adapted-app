@@ -1,5 +1,3 @@
-"""Structure, roles and access rights (Database criterion: Design, Deployment, Usage)."""
-
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import DBAPIError, ProgrammingError
@@ -11,7 +9,7 @@ EXPECTED_TABLES = {
     "privacy_notice", "adaptation_rule", "account", "learner", "course", "document", "section", "chunk",
     "question", "question_option", "quiz", "quiz_item", "attempt", "topic_state", "adaptation_event",
     "chat_session", "message", "message_source", "test_form", "test_form_item",
-    "review_item", "simulated_gap",                                   # migration 0006
+    "review_item", "simulated_gap",
 }
 
 
@@ -31,7 +29,6 @@ def test_every_table_has_a_primary_key(conn):
 
 
 def test_every_foreign_key_is_indexed(conn):
-    """Unindexed FKs make cascading deletes (US-03) and joins slow."""
     unindexed = conn.execute(text("""
         SELECT con.conrelid::regclass || '.' || con.conname
           FROM pg_constraint con
@@ -43,7 +40,6 @@ def test_every_foreign_key_is_indexed(conn):
 
 
 def test_relationship_types_present(conn):
-    # 1:1 (account-learner), 1:N (course-document), N:M (quiz-question via quiz_item), self-reference (section)
     assert scalar(conn, "SELECT count(*) FROM pg_constraint WHERE conname = 'uq_learner_account_id'") == 1
     assert scalar(conn, "SELECT count(*) FROM pg_constraint WHERE conname = 'fk_section_parent_id_section'") == 1
 
@@ -73,7 +69,6 @@ def test_app_cannot_read_migration_table(conn):
 
 
 def test_new_tables_get_rights_automatically(migrator_engine, app_engine):
-    """Default privileges: a table created later by admin is usable by the app without extra GRANTs."""
     with migrator_engine.connect() as m:
         m.execute(text("SET ROLE admin"))
         m.execute(text("CREATE TABLE tmp_default_priv (id int)"))

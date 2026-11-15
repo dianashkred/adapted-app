@@ -14,7 +14,6 @@ REFERENCE_TABLES = "privacy_notice, adaptation_rule"
 
 
 def upgrade() -> None:
-    # Group roles normally come from db/init (Docker) or docs/supabase-roles.sql; create them if missing.
     op.execute("""
     DO $$
     BEGIN
@@ -24,25 +23,18 @@ def upgrade() -> None:
     END $$;
     """)
 
-    # --- application schema -------------------------------------------------------------
     op.execute("GRANT USAGE ON SCHEMA public TO app_read")
     op.execute("GRANT SELECT ON ALL TABLES IN SCHEMA public TO app_read")
     op.execute("GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_write")
     op.execute("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_write")
-    # Reference data is changed only by admin (migrations / seed scripts).
     op.execute(f"REVOKE INSERT, UPDATE, DELETE ON {REFERENCE_TABLES} FROM app_write")
-    # Migration bookkeeping is not application data.
     op.execute("REVOKE ALL ON alembic_version FROM app_read, app_write")
 
-    # New objects created later by admin get the same rights automatically
-    # ("when adding new objects, check and update user permissions").
     op.execute("ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA public GRANT SELECT ON TABLES TO app_read")
     op.execute("ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO app_write")
     op.execute("ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_write")
-    # Functions are NOT executable by everybody: EXECUTE is granted one by one in 0003.
     op.execute("ALTER DEFAULT PRIVILEGES FOR ROLE admin REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC")
 
-    # --- analytics schema: only pseudonymised views ----------------------------------------
     op.execute("CREATE SCHEMA IF NOT EXISTS analytics AUTHORIZATION admin")
     op.execute("REVOKE ALL ON SCHEMA analytics FROM PUBLIC")
     op.execute("GRANT USAGE ON SCHEMA analytics TO analytics_read, app_read")

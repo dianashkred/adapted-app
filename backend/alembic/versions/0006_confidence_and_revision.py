@@ -1,31 +1,5 @@
 """Confidence, review list, topic and revision quizzes, learner preferences, simulated profiles.
 
-Source of truth: ../doc/decisions/0002-confidence-and-revision.md (extension beyond the BA).
-Nothing of US-11, US-12, decision 0001, mode A or the pre-/post-tests changes.
-
-* ENUM answer_confidence, review_reason, ui_theme; quiz_kind + topic_quiz, revision
-* attempt.confidence                – required for check/review/topic_quiz/revision, NULL for tests
-* learner: is_simulated, nullable account_id, ui_theme, revision_reminders, last_seen_at
-* review_item                       – the learner's review list (rule 3)
-* simulated_gap                     – ground-truth gaps of simulated learners (US-18, KPI K2)
-* trg_attempt_validate (extended)   – multiple choice only in topic/revision quizzes; confidence rules
-* trg_attempt_apply (extended)      – topic/revision quizzes never touch topic_state; auto-complete
-* trg_attempt_review_list (new)     – maintains review_item (not for mode A, never for tests)
-* trg_quiz_adaptive_only (new)      – no topic/revision quizzes for mode A participants
-* trg_simulated_gap_validate (new)  – ground truth only for simulated learners and topics
-* quiz_review(), revision_offer()   – end-of-quiz review (rule 4), revision offer (rule 6)
-* analytics: confidence + is_simulated in the views, v_confidence_calibration, v_gap_detection;
-  simulated learners excluded from mv_check_summary
-
-Why quiz_kind is RECREATED instead of ``ALTER TYPE ... ADD VALUE``:
-alembic/env.py runs the whole upgrade in ONE transaction, and PostgreSQL forbids using an enum value
-added by ADD VALUE before that transaction commits ("unsafe use of new value"). This migration needs
-the new values immediately (CHECK constraints below), and a downgrade cannot remove enum values.
-So the type is renamed, a new type is created, the column is converted (``USING kind::text::quiz_kind``)
-and the old type is dropped. Objects that depend on quiz.kind (analytics views, three CHECK
-constraints, the partial index uq_quiz_one_open_check) are dropped first and recreated afterwards
-with the same names. All of it is transactional: either everything is applied or nothing.
-
 Revision ID: 0006
 Revises: 0005
 """
@@ -37,9 +11,6 @@ branch_labels = None
 depends_on = None
 
 
-# ======================================================================================
-# Shared pieces
-# ======================================================================================
 DROP_ANALYTICS_VIEWS = r"""
 DROP MATERIALIZED VIEW IF EXISTS analytics.mv_check_summary;
 DROP VIEW IF EXISTS analytics.v_gap_detection, analytics.v_confidence_calibration,
@@ -66,54 +37,31 @@ CREATE UNIQUE INDEX uq_quiz_one_open_check ON quiz (learner_id, section_id) WHER
 """
 
 
-# ======================================================================================
-# UPGRADE
-# ======================================================================================
 UPGRADE_SQL = r"""
--- -------------------------------------------------------------------------------------
--- 1. New ENUM types
--- -------------------------------------------------------------------------------------
 CREATE TYPE answer_confidence AS ENUM ('sure', 'not_sure', 'guessing');
 CREATE TYPE review_reason     AS ENUM ('incorrect', 'unsure');
 CREATE TYPE ui_theme          AS ENUM ('system', 'light', 'dark');
 
--- -------------------------------------------------------------------------------------
--- 2. quiz_kind + topic_quiz, revision (recreated, see the module docstring)
--- -------------------------------------------------------------------------------------
 """ + DROP_ANALYTICS_VIEWS + QUIZ_KIND_DEPENDENTS_DROP + r"""
 ALTER TYPE quiz_kind RENAME TO quiz_kind_0005;
 CREATE TYPE quiz_kind AS ENUM ('check', 'review', 'pre_test', 'post_test', 'topic_quiz', 'revision');
 ALTER TABLE quiz ALTER COLUMN kind TYPE quiz_kind USING kind::text::quiz_kind;
 DROP TYPE quiz_kind_0005;
 """ + QUIZ_KIND_DEPENDENTS_CREATE + r"""
--- A topic quiz belongs to one topic (like a check); a revision quiz has 10-20 questions.
--- The general limit 1-30 (ck_quiz_max_questions_range) stays; a check keeps max 6.
 ALTER TABLE quiz
   ADD CONSTRAINT ck_quiz_topic_quiz_is_per_topic CHECK (kind <> 'topic_quiz' OR section_id IS NOT NULL),
   ADD CONSTRAINT ck_quiz_revision_size CHECK (kind <> 'revision' OR max_questions BETWEEN 10 AND 20);
 
--- -------------------------------------------------------------------------------------
--- 3. learner: simulated profiles and preferences
--- -------------------------------------------------------------------------------------
 ALTER TABLE learner
   ADD COLUMN is_simulated       boolean     NOT NULL DEFAULT false,
   ADD COLUMN ui_theme           ui_theme    NOT NULL DEFAULT 'system',
   ADD COLUMN revision_reminders boolean     NOT NULL DEFAULT true,
   ADD COLUMN last_seen_at       timestamptz NULL,
-  ALTER COLUMN account_id DROP NOT NULL,                       -- uq_learner_account_id stays
+  ALTER COLUMN account_id DROP NOT NULL,
   ADD CONSTRAINT ck_learner_account_iff_real CHECK ((account_id IS NOT NULL) = (NOT is_simulated));
 
--- -------------------------------------------------------------------------------------
--- 4. attempt.confidence (rules by quiz kind are in trg_attempt_validate: they need the quiz row)
--- -------------------------------------------------------------------------------------
 ALTER TABLE attempt ADD COLUMN confidence answer_confidence NULL;
 
--- -------------------------------------------------------------------------------------
--- 5. review_item: the learner's review list
--- -------------------------------------------------------------------------------------
--- first/last_attempt_id use ON DELETE SET NULL: the item belongs to (learner, question) and both of
--- these cascade it away; the attempts are only its provenance. An attempt disappears on its own only
--- when its quiz is deleted, and that must not silently remove the question from the review list.
 CREATE TABLE review_item (
   learner_id       uuid          NOT NULL,
   question_id      uuid          NOT NULL,
@@ -136,12 +84,8 @@ CREATE TABLE review_item (
 CREATE INDEX ix_review_item_question_id ON review_item (question_id);
 CREATE INDEX ix_review_item_first_attempt_id ON review_item (first_attempt_id);
 CREATE INDEX ix_review_item_last_attempt_id ON review_item (last_attempt_id);
--- Composing reviews / topic quizzes / revision quizzes reads only the open, due items of a learner.
 CREATE INDEX ix_review_item_open_due ON review_item (learner_id, due_at) WHERE resolved_at IS NULL;
 
--- -------------------------------------------------------------------------------------
--- 6. simulated_gap: ground truth of simulated learners (US-18, KPI K2)
--- -------------------------------------------------------------------------------------
 CREATE TABLE simulated_gap (
   learner_id uuid NOT NULL,
   section_id uuid NOT NULL,
@@ -164,9 +108,6 @@ END $$;
 CREATE TRIGGER trg_simulated_gap_validate BEFORE INSERT OR UPDATE ON simulated_gap
   FOR EACH ROW EXECUTE FUNCTION trg_simulated_gap_validate();
 
--- -------------------------------------------------------------------------------------
--- 7. Quiz: topic and revision quizzes are adaptive features (rule 7)
--- -------------------------------------------------------------------------------------
 CREATE FUNCTION trg_quiz_adaptive_only() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.kind IN ('topic_quiz', 'revision')
@@ -179,9 +120,6 @@ END $$;
 CREATE TRIGGER trg_quiz_adaptive_only BEFORE INSERT OR UPDATE OF kind, learner_id ON quiz
   FOR EACH ROW EXECUTE FUNCTION trg_quiz_adaptive_only();
 
--- -------------------------------------------------------------------------------------
--- 8. Attempt triggers
--- -------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION trg_attempt_validate() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   q quiz%ROWTYPE;
@@ -204,12 +142,10 @@ BEGIN
   IF v_answered >= q.max_questions THEN
     RAISE EXCEPTION 'quiz % already has % answers (limit)', q.id, q.max_questions USING ERRCODE = 'check_violation';
   END IF;
-  -- Decision 0002, rules 5-6: topic and revision quizzes are multiple-choice only.
   IF q.kind IN ('topic_quiz', 'revision')
      AND (SELECT kind FROM question WHERE id = NEW.question_id) <> 'multiple_choice' THEN
     RAISE EXCEPTION 'a % accepts only multiple-choice questions', q.kind USING ERRCODE = 'check_violation';
   END IF;
-  -- Decision 0002, rule 1: confidence after every answer, except in pre-/post-tests.
   IF q.kind IN ('pre_test', 'post_test') THEN
     IF NEW.confidence IS NOT NULL THEN
       RAISE EXCEPTION 'confidence is not recorded in pre- and post-tests' USING ERRCODE = 'check_violation';
@@ -230,12 +166,9 @@ DECLARE
 BEGIN
   IF NEW.quiz_id IS NOT NULL THEN
     SELECT * INTO q FROM quiz WHERE id = NEW.quiz_id;
-    -- Pre- and post-tests measure learning; they must not change the learner model.
     IF q.kind IN ('pre_test', 'post_test') THEN
       RETURN NULL;
     END IF;
-    -- Decision 0002: topic and revision quizzes never change topic status, level or the
-    -- knowledge-check counters; they are completed automatically at max_questions.
     IF q.kind IN ('topic_quiz', 'revision') THEN
       IF (SELECT count(*) FROM attempt WHERE quiz_id = q.id) >= q.max_questions THEN
         UPDATE quiz SET status = 'completed', ended_at = now() WHERE id = q.id;
@@ -247,7 +180,6 @@ BEGIN
   v_topic := topic_of((SELECT section_id FROM question WHERE id = NEW.question_id));
   SELECT experiment_mode INTO v_mode FROM learner WHERE id = NEW.learner_id;
 
-  -- 1. Counters of the learner model (same transaction as the answer).
   INSERT INTO topic_state AS t (learner_id, section_id, attempts_count, correct_count, consecutive_errors, last_attempt_at)
   VALUES (NEW.learner_id, v_topic, 1, NEW.is_correct::int, (NOT NEW.is_correct)::int, NEW.created_at)
   ON CONFLICT (learner_id, section_id) DO UPDATE
@@ -257,12 +189,11 @@ BEGIN
          last_attempt_at    = NEW.created_at;
 
   IF NEW.quiz_id IS NULL OR q.kind <> 'check' THEN
-    RETURN NULL;                         -- reviews and free answers only update the counters
+    RETURN NULL;
   END IF;
 
   s := check_summary(NEW.quiz_id);
 
-  -- 2. Adaptation (mode B and ordinary students). Mode A (plain RAG) keeps the level fixed.
   IF v_mode IS DISTINCT FROM 'plain_rag' THEN
     v_new := next_level(NEW.level, NEW.is_correct);
     IF v_new <> NEW.level THEN
@@ -272,7 +203,6 @@ BEGIN
               CASE WHEN NEW.is_correct THEN 'level_up' ELSE 'level_down' END, NEW.level, v_new);
     END IF;
 
-    -- 3. Early end of the check.
     IF s.last_two_wrong THEN
       INSERT INTO adaptation_event (learner_id, section_id, attempt_id, quiz_id, rule, from_level, to_level)
       VALUES (NEW.learner_id, v_topic, NEW.id, NEW.quiz_id, 'basic_chapter_link', NEW.level, 'basic');
@@ -285,28 +215,26 @@ BEGIN
     END IF;
   END IF;
 
-  -- 4. Question limit (both modes).
   IF s.total >= q.max_questions THEN
     PERFORM finish_check(NEW.quiz_id, 'question_limit');
   END IF;
   RETURN NULL;
 END $$;
 
--- Review list (decision 0002, rules 3 and 7). Fires after trg_attempt_apply (triggers fire in name order).
 CREATE FUNCTION trg_attempt_review_list() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   v_kind   quiz_kind;
   v_reason review_reason;
 BEGIN
   IF NEW.quiz_id IS NULL THEN
-    RETURN NULL;                                        -- answers outside a quiz are not covered
+    RETURN NULL;
   END IF;
   SELECT kind INTO v_kind FROM quiz WHERE id = NEW.quiz_id;
   IF v_kind NOT IN ('check', 'review', 'topic_quiz', 'revision') THEN
-    RETURN NULL;                                        -- pre-/post-tests never touch the review list
+    RETURN NULL;
   END IF;
   IF EXISTS (SELECT 1 FROM learner WHERE id = NEW.learner_id AND experiment_mode = 'plain_rag') THEN
-    RETURN NULL;                                        -- adaptive feature: not for mode A
+    RETURN NULL;
   END IF;
 
   v_reason := CASE WHEN NOT NEW.is_correct                      THEN 'incorrect'::review_reason
@@ -321,7 +249,7 @@ BEGIN
            times_added     = r.times_added + 1,
            due_at          = EXCLUDED.due_at,
            resolved_at     = NULL;
-  ELSIF NEW.confidence = 'sure' THEN                    -- correct and sure: the item leaves the list
+  ELSIF NEW.confidence = 'sure' THEN
     UPDATE review_item
        SET resolved_at = NEW.created_at, last_attempt_id = NEW.id
      WHERE learner_id = NEW.learner_id AND question_id = NEW.question_id AND resolved_at IS NULL;
@@ -331,10 +259,6 @@ END $$;
 CREATE TRIGGER trg_attempt_review_list AFTER INSERT ON attempt
   FOR EACH ROW EXECUTE FUNCTION trg_attempt_review_list();
 
--- -------------------------------------------------------------------------------------
--- 9. Functions used by the backend
--- -------------------------------------------------------------------------------------
--- Rule 4: answers of a quiz that were incorrect or not sure, with the correct answer.
 CREATE FUNCTION quiz_review(p_quiz uuid)
 RETURNS TABLE (attempt_id bigint, item_position smallint, question_id uuid, prompt text,
                question_kind question_kind, selected_option smallint, selected_text text,
@@ -353,7 +277,6 @@ LANGUAGE sql STABLE AS $$
    ORDER BY qi.position, a.id
 $$;
 
--- Rule 6: should a revision quiz be offered now, and why ('absence' / 'new_topic' / NULL)?
 CREATE FUNCTION revision_offer(p_learner uuid, p_course uuid, p_absence_days int DEFAULT 7,
                                OUT offered boolean, OUT reason text)
 LANGUAGE plpgsql STABLE AS $$
@@ -370,10 +293,9 @@ BEGIN
   END IF;
   SELECT * INTO l FROM learner WHERE id = p_learner;
   IF NOT FOUND OR NOT l.revision_reminders OR l.experiment_mode IS NOT DISTINCT FROM 'plain_rag' THEN
-    RETURN;                                             -- switched off, or mode A (rule 7)
+    RETURN;
   END IF;
 
-  -- Topics of the course in course order; "studied" = a check gave Gap or Mastered.
   WITH topics AS (
     SELECT row_number() OVER (ORDER BY d.uploaded_at, d.id, s.position) AS n,
            coalesce(t.status, 'not_checked') <> 'not_checked'            AS studied
@@ -387,21 +309,17 @@ BEGIN
     FROM topics;
 
   IF NOT v_any_studied THEN
-    RETURN;                                             -- nothing to revise yet
+    RETURN;
   END IF;
 
-  -- (b) return after a long absence
   IF l.last_seen_at IS NOT NULL AND l.last_seen_at < now() - make_interval(days => p_absence_days) THEN
     offered := true; reason := 'absence';
     RETURN;
   END IF;
 
-  -- (a) before a new topic whose earlier topics have all been studied
-  --     (the first not-studied topic in course order is not the first topic) ...
   IF v_first_open IS NULL OR v_first_open = 1 THEN
     RETURN;
   END IF;
-  -- ... unless a revision quiz of this course was already started after the last check result.
   SELECT max(z.ended_at) INTO v_last_result
     FROM quiz z JOIN section s ON s.id = z.section_id JOIN document d ON d.id = s.document_id
    WHERE z.learner_id = p_learner AND z.kind = 'check' AND z.outcome IN ('gap', 'mastered') AND d.course_id = p_course;
@@ -418,9 +336,6 @@ BEGIN
   offered := true; reason := 'new_topic';
 END $$;
 
--- -------------------------------------------------------------------------------------
--- 10. Analytics (pseudonymous ids only; simulated learners flagged)
--- -------------------------------------------------------------------------------------
 CREATE VIEW analytics.v_attempt AS
 SELECT a.id            AS attempt_id,
        a.learner_id,
@@ -458,7 +373,7 @@ SELECT q.id AS quiz_id, q.learner_id, l.experiment_mode, l.is_simulated, q.secti
  WHERE q.kind = 'check'
  GROUP BY q.id, l.experiment_mode, l.is_simulated;
 
-CREATE VIEW analytics.v_answer_quality AS            -- KPI K1 and NFR-01/02
+CREATE VIEW analytics.v_answer_quality AS
 SELECT m.id AS message_id, cs.learner_id, l.experiment_mode, l.is_simulated, cs.section_id AS topic_id,
        m.model, m.latency_ms, m.prompt_tokens, m.completion_tokens, m.max_similarity, m.is_refusal,
        (SELECT count(*) FROM message_source ms WHERE ms.message_id = m.id) AS sources_count,
@@ -468,7 +383,7 @@ SELECT m.id AS message_id, cs.learner_id, l.experiment_mode, l.is_simulated, cs.
   JOIN learner l ON l.id = cs.learner_id
  WHERE m.role = 'assistant';
 
-CREATE VIEW analytics.v_test_result AS               -- KPI K3: pre-test vs post-test
+CREATE VIEW analytics.v_test_result AS
 SELECT q.learner_id, l.experiment_mode, l.is_simulated, q.kind AS test_kind,
        count(a.id) AS answered, count(a.id) FILTER (WHERE a.is_correct) AS correct, q.ended_at
   FROM quiz q
@@ -477,7 +392,6 @@ SELECT q.learner_id, l.experiment_mode, l.is_simulated, q.kind AS test_kind,
  WHERE q.kind IN ('pre_test', 'post_test')
  GROUP BY q.id, l.experiment_mode, l.is_simulated;
 
--- Calibration: how often answers given with each confidence are correct (real learners only).
 CREATE VIEW analytics.v_confidence_calibration AS
 SELECT coalesce(experiment_mode::text, 'not_participant') AS experiment_mode,
        level,
@@ -489,8 +403,6 @@ SELECT coalesce(experiment_mode::text, 'not_participant') AS experiment_mode,
  WHERE confidence IS NOT NULL AND NOT is_simulated
  GROUP BY 1, 2, 3;
 
--- KPI K2: predicted status of every topic of the courses a simulated learner worked on vs the
--- ground truth. accuracy = (TP + TN) / N; F1(Gap) = 2 TP / (2 TP + FP + FN).
 CREATE VIEW analytics.v_gap_detection AS
 WITH courses AS (
   SELECT DISTINCT x.learner_id, d.course_id
@@ -518,7 +430,6 @@ SELECT c.learner_id,
   LEFT JOIN topic_state t   ON t.learner_id = c.learner_id AND t.section_id = s.id
   LEFT JOIN simulated_gap g ON g.learner_id = c.learner_id AND g.section_id = s.id;
 
--- Summary per experiment mode: REAL learners only (simulated profiles excluded).
 CREATE MATERIALIZED VIEW analytics.mv_check_summary AS
 SELECT coalesce(experiment_mode::text, 'not_participant') AS experiment_mode,
        count(*)                                       AS checks,
@@ -530,18 +441,10 @@ SELECT coalesce(experiment_mode::text, 'not_participant') AS experiment_mode,
  GROUP BY 1;
 CREATE UNIQUE INDEX uq_mv_check_summary_mode ON analytics.mv_check_summary (experiment_mode);
 
--- -------------------------------------------------------------------------------------
--- 11. Rights. Tables and views get theirs from the default privileges of 0002
---     (app_read/app_write on public, analytics_read on analytics). Functions explicitly:
--- -------------------------------------------------------------------------------------
 GRANT EXECUTE ON FUNCTION quiz_review(uuid), revision_offer(uuid, uuid, int) TO app_write, app_read;
 """
 
 
-# ======================================================================================
-# DOWNGRADE — restores 0005 exactly. Refuses (and changes nothing) if data exists that the
-# 0005 schema cannot hold: topic/revision quizzes or simulated learners.
-# ======================================================================================
 DOWNGRADE_GUARD = r"""
 DO $$
 BEGIN
@@ -590,7 +493,6 @@ DECLARE
 BEGIN
   IF NEW.quiz_id IS NOT NULL THEN
     SELECT * INTO q FROM quiz WHERE id = NEW.quiz_id;
-    -- Pre- and post-tests measure learning; they must not change the learner model.
     IF q.kind IN ('pre_test', 'post_test') THEN
       RETURN NULL;
     END IF;
@@ -599,7 +501,6 @@ BEGIN
   v_topic := topic_of((SELECT section_id FROM question WHERE id = NEW.question_id));
   SELECT experiment_mode INTO v_mode FROM learner WHERE id = NEW.learner_id;
 
-  -- 1. Counters of the learner model (same transaction as the answer).
   INSERT INTO topic_state AS t (learner_id, section_id, attempts_count, correct_count, consecutive_errors, last_attempt_at)
   VALUES (NEW.learner_id, v_topic, 1, NEW.is_correct::int, (NOT NEW.is_correct)::int, NEW.created_at)
   ON CONFLICT (learner_id, section_id) DO UPDATE
@@ -609,12 +510,11 @@ BEGIN
          last_attempt_at    = NEW.created_at;
 
   IF NEW.quiz_id IS NULL OR q.kind <> 'check' THEN
-    RETURN NULL;                         -- reviews and free answers only update the counters
+    RETURN NULL;
   END IF;
 
   s := check_summary(NEW.quiz_id);
 
-  -- 2. Adaptation (mode B and ordinary students). Mode A (plain RAG) keeps the level fixed.
   IF v_mode IS DISTINCT FROM 'plain_rag' THEN
     v_new := next_level(NEW.level, NEW.is_correct);
     IF v_new <> NEW.level THEN
@@ -624,7 +524,6 @@ BEGIN
               CASE WHEN NEW.is_correct THEN 'level_up' ELSE 'level_down' END, NEW.level, v_new);
     END IF;
 
-    -- 3. Early end of the check.
     IF s.last_two_wrong THEN
       INSERT INTO adaptation_event (learner_id, section_id, attempt_id, quiz_id, rule, from_level, to_level)
       VALUES (NEW.learner_id, v_topic, NEW.id, NEW.quiz_id, 'basic_chapter_link', NEW.level, 'basic');
@@ -637,7 +536,6 @@ BEGIN
     END IF;
   END IF;
 
-  -- 4. Question limit (both modes).
   IF s.total >= q.max_questions THEN
     PERFORM finish_check(NEW.quiz_id, 'question_limit');
   END IF;
@@ -681,7 +579,7 @@ SELECT q.id AS quiz_id, q.learner_id, l.experiment_mode, q.section_id AS topic_i
  WHERE q.kind = 'check'
  GROUP BY q.id, l.experiment_mode;
 
-CREATE VIEW analytics.v_answer_quality AS            -- KPI K1 and NFR-01/02
+CREATE VIEW analytics.v_answer_quality AS
 SELECT m.id AS message_id, cs.learner_id, l.experiment_mode, cs.section_id AS topic_id,
        m.model, m.latency_ms, m.prompt_tokens, m.completion_tokens, m.max_similarity, m.is_refusal,
        (SELECT count(*) FROM message_source ms WHERE ms.message_id = m.id) AS sources_count,
@@ -691,7 +589,7 @@ SELECT m.id AS message_id, cs.learner_id, l.experiment_mode, cs.section_id AS to
   JOIN learner l ON l.id = cs.learner_id
  WHERE m.role = 'assistant';
 
-CREATE VIEW analytics.v_test_result AS               -- KPI K3: pre-test vs post-test
+CREATE VIEW analytics.v_test_result AS
 SELECT q.learner_id, l.experiment_mode, q.kind AS test_kind,
        count(a.id) AS answered, count(a.id) FILTER (WHERE a.is_correct) AS correct, q.ended_at
   FROM quiz q

@@ -1,12 +1,3 @@
-"""Protection of e-mail addresses (the only direct personal data in the database).
-
-* ``email_encrypted`` – Fernet (AES-128-CBC + HMAC-SHA256); the key lives outside the database.
-* ``email_hash`` – HMAC-SHA256 of the normalised address with a secret pepper; used for
-  look-ups and the UNIQUE constraint without storing the address in clear text.
-* ``mask_email`` – masked form for logs and admin screens (``d***@gmail.com``).
-Passwords are never stored by AdaptED: the identity provider (Supabase Auth) keeps only bcrypt hashes.
-"""
-
 import hashlib
 import hmac
 

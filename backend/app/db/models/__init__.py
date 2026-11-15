@@ -1,5 +1,3 @@
-"""All ORM models; importing this package registers every table on Base.metadata."""
-
 from app.db.models.reference import AdaptationRule, PrivacyNotice
 from app.db.models.identity import Account, Learner
 from app.db.models.course import Chunk, Course, Document, Section
@@ -14,7 +12,6 @@ __all__ = [
     "ChatSession", "Message", "MessageSource", "TestForm", "TestFormItem", "SimulatedGap",
 ]
 
-# Groups used by the documentation and the colour-coded schema diagram.
 TABLE_GROUPS = {
     "Reference data": ["privacy_notice", "adaptation_rule"],
     "Identity": ["account", "learner"],

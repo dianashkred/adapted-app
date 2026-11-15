@@ -1,5 +1,3 @@
-"""Questions, quizzes (knowledge checks, reviews, tests) and answers."""
-
 import uuid
 from datetime import datetime
 
@@ -42,20 +40,11 @@ class QuestionOption(Base):
     __table_args__ = (
         CheckConstraint("position BETWEEN 1 AND 6", name="position_range"),
         CheckConstraint("length(btrim(option_text)) > 0", name="text_not_blank"),
-        # Exactly one correct option at most (the "at least one" rule is a trigger).
         Index("uq_question_option_one_correct", "question_id", unique=True, postgresql_where=text("is_correct")),
     )
 
 
 class Quiz(Base):
-    """A set of questions given to a learner.
-
-    ``kind = 'check'`` is the topic knowledge check: max 6 questions, first one Intermediate,
-    ends early after two correct Advanced answers in a row or two errors in a row (docs/database.md, 6.2).
-    ``topic_quiz`` (one topic, <= 30) and ``revision`` (10-20) are multiple-choice practice quizzes that
-    never change the learner model (decision 0002); not available in experiment mode A.
-    """
-
     __tablename__ = "quiz"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
@@ -79,7 +68,6 @@ class Quiz(Base):
         CheckConstraint("kind = 'check' OR end_reason IS NULL", name="end_reason_only_for_checks"),
         CheckConstraint("kind <> 'topic_quiz' OR section_id IS NOT NULL", name="topic_quiz_is_per_topic"),
         CheckConstraint("kind <> 'revision' OR max_questions BETWEEN 10 AND 20", name="revision_size"),
-        # At most one open knowledge check per learner and topic.
         Index("uq_quiz_one_open_check", "learner_id", "section_id", unique=True,
               postgresql_where=text("kind = 'check' AND status = 'in_progress'")),
         Index("ix_quiz_learner_started", "learner_id", "started_at"),
@@ -100,8 +88,6 @@ class QuizItem(Base):
 
 
 class Attempt(CreatedAtMixin, Base):
-    """One answer of a learner. Inserting it fires the learner-model trigger (docs/database.md, 6)."""
-
     __tablename__ = "attempt"
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
@@ -114,7 +100,6 @@ class Attempt(CreatedAtMixin, Base):
     is_correct: Mapped[bool] = mapped_column(Boolean)
     evaluated_by: Mapped[EvaluationMethod] = mapped_column(pg_enum(EvaluationMethod, "evaluation_method"))
     feedback: Mapped[str | None] = mapped_column(Text)
-    # Required for check/review/topic_quiz/revision, NULL in pre-/post-tests (trigger trg_attempt_validate).
     confidence: Mapped[AnswerConfidence | None] = mapped_column(pg_enum(AnswerConfidence, "answer_confidence"))
 
     __table_args__ = (
@@ -126,7 +111,6 @@ class Attempt(CreatedAtMixin, Base):
         CheckConstraint("(selected_option IS NULL) = (evaluated_by = 'llm')", name="evaluation_matches_form"),
         Index("ix_attempt_learner_created", "learner_id", "created_at"),
         Index("ix_attempt_question_option", "question_id", "selected_option"),
-        # One answer per question inside one quiz (created in migration 0003).
         Index("uq_attempt_quiz_question", "quiz_id", "question_id", unique=True,
               postgresql_where=text("quiz_id IS NOT NULL")),
     )

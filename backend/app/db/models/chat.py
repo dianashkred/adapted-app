@@ -1,5 +1,3 @@
-"""Chats and guided lessons, their messages and the chunks shown as sources."""
-
 import uuid
 from datetime import datetime
 

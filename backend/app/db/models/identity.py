@@ -1,5 +1,3 @@
-"""Accounts (the only table with personal data) and pseudonymous learners."""
-
 import uuid
 from datetime import datetime
 
@@ -30,11 +28,6 @@ class Account(CreatedAtMixin, Base):
 
 
 class Learner(CreatedAtMixin, Base):
-    """Pseudonymous identity used by ALL learning data and exports (1:1 with account).
-
-    A simulated learner (US-18, KPI K2) has no account; its ground-truth gaps are in ``simulated_gap``.
-    """
-
     __tablename__ = "learner"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
@@ -53,6 +46,5 @@ class Learner(CreatedAtMixin, Base):
     __table_args__ = (
         CheckConstraint("experiment_mode IS NULL OR is_participant", name="mode_only_for_participants"),
         CheckConstraint("(experiment_mode IS NULL) = (mode_assigned_at IS NULL)", name="mode_and_time_together"),
-        # A real learner has an account; a simulated one has none (decision 0002, rule 9).
         CheckConstraint("(account_id IS NOT NULL) = (NOT is_simulated)", name="account_iff_real"),
     )

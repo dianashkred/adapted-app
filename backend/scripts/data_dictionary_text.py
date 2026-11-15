@@ -1,5 +1,3 @@
-"""Descriptions for the data dictionary (docs/data-dictionary.md). Keep in sync with the models."""
-
 TABLES = {
     "privacy_notice": ("Reference", "Versions of the Privacy Notice; every consent refers to one version."),
     "adaptation_rule": ("Reference", "Codes of the learner-model and knowledge-check rules used in adaptation_event."),

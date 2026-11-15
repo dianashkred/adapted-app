@@ -1,9 +1,3 @@
-"""Generates the colour-coded logical schema (ER diagram) from the ORM models.
-
-    python -m scripts.generate_er        # needs Graphviz ("dot") installed
-Output: docs/er-diagram.svg, docs/er-diagram.png, docs/er-diagram.dot
-"""
-
 import subprocess
 from pathlib import Path
 
@@ -13,7 +7,7 @@ import app.db.models as models
 from app.db.base import Base
 
 DOCS = Path(__file__).resolve().parents[2] / "docs"
-COLOURS = {  # one colour per block of the schema
+COLOURS = {
     "Reference data": "#E7E6E6", "Identity": "#F8CBAD", "Course materials": "#BDD7EE",
     "Assessment": "#FFE699", "Learner model": "#C6E0B4", "Chat": "#D9C3E9", "Experiment": "#F4B6C2",
 }

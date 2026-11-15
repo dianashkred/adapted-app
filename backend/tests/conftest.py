@@ -1,9 +1,3 @@
-"""Integration tests run against a REAL PostgreSQL + pgvector (database adapted_test).
-
-The schema is rebuilt from zero with the migrations once per test session; every test runs in a
-transaction that is rolled back, so tests do not affect each other.
-"""
-
 import os
 import uuid
 
@@ -27,7 +21,6 @@ def alembic_cfg() -> Config:
 
 @pytest.fixture(scope="session", autouse=True)
 def migrated_db():
-    """Empty the test database, then rebuild it: downgrade to zero and upgrade to head."""
     engine = create_engine(settings.test_migrator_database_url)
     with engine.connect() as c:
         c.execute(text("SET ROLE admin"))
@@ -55,7 +48,6 @@ def migrator_engine():
 
 @pytest.fixture
 def conn(app_engine):
-    """Connection as the APPLICATION role inside a transaction that is always rolled back."""
     with app_engine.connect() as c:
         trans = c.begin()
         yield c
@@ -66,7 +58,6 @@ def scalar(conn, sql, **p):
     return conn.execute(text(sql), p).scalar_one()
 
 
-# ---------------------------------------------------------------- factories
 @pytest.fixture
 def make(conn):
     class Make:
@@ -83,7 +74,6 @@ def make(conn):
                                    RETURNING id""", a=account, p=mode is not None, m=mode)
 
         def simulated_learner(self):
-            """Simulated profile (decision 0002, rule 9): no account."""
             return scalar(conn, "INSERT INTO learner (account_id, is_simulated) VALUES (NULL, true) RETURNING id")
 
         def course(self, owner=None, visibility="private"):
@@ -122,8 +112,6 @@ def make(conn):
 
 @pytest.fixture
 def check(conn, make):
-    """Drive a knowledge check like the backend does: ask at the current level, answer, repeat."""
-
     class Check:
         def __init__(self, learner, topic):
             self.learner, self.topic = learner, topic
@@ -137,7 +125,6 @@ def check(conn, make):
                           l=self.learner, t=self.topic)
 
         def answer(self, correct: bool, section=None, confidence="sure", question=None):
-            # Every check answer carries a confidence since decision 0002 (rule 1).
             level = self.level
             self.levels.append(level)
             q = question or make.question(section or self.topic, level)

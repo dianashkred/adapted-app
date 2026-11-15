@@ -1,5 +1,3 @@
-"""Fixed pre- and post-tests of the experiment (identical for modes A and B)."""
-
 import uuid
 
 from sqlalchemy import CheckConstraint, ForeignKey, SmallInteger, String, UniqueConstraint, text
@@ -37,12 +35,6 @@ class TestFormItem(Base):
 
 
 class SimulatedGap(Base):
-    """Ground-truth gap topic of a simulated learner (US-18, KPI K2; decision 0002, rule 9).
-
-    Only for simulated learners and level-1 sections (trigger trg_simulated_gap_validate).
-    Compared with topic_state.status in analytics.v_gap_detection.
-    """
-
     __tablename__ = "simulated_gap"
 
     learner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("learner.id", ondelete="CASCADE"), primary_key=True)

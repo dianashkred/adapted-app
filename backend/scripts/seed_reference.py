@@ -1,8 +1,3 @@
-"""Fill (or refresh) the reference tables. Run as the migrator (reference data belongs to admin).
-
-    python -m scripts.seed_reference
-"""
-
 from pathlib import Path
 
 from sqlalchemy import create_engine, text

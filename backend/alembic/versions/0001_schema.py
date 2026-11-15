@@ -16,7 +16,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")  # installed by the superuser; no-op here
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     op.create_table('adaptation_rule',
     sa.Column('code', sa.String(length=40), nullable=False),
     sa.Column('description', sa.Text(), nullable=False),

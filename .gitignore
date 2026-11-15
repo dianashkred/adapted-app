@@ -37,7 +37,3 @@ Thumbs.db
 
 # Personal Claude Code settings (the shared .claude/settings.json stays)
 .claude/settings.local.json
-CLAUDE.md
-PROJECT_CONTEXT.md
-STACK.md
-.claude/

@@ -1,5 +1,3 @@
-"""Courses, uploaded documents, their heading tree (topics) and chunks with embeddings."""
-
 import uuid
 from datetime import datetime
 
@@ -12,7 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base, CreatedAtMixin
 from app.db.enums import CourseVisibility, DocumentStatus, pg_enum
 
-EMBEDDING_DIM = 384          # BAAI/bge-small-en-v1.5
+EMBEDDING_DIM = 384
 MAX_FILE_BYTES = 50 * 1024 * 1024
 ALLOWED_MIME = ("application/pdf",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -44,7 +42,6 @@ class Document(Base):
     mime_type: Mapped[str] = mapped_column(String(100))
     size_bytes: Mapped[int] = mapped_column(BigInteger)
     sha256: Mapped[str] = mapped_column(String(64))
-    # Path of the original file in the private storage bucket (BA US-04); NULL only while uploading.
     storage_path: Mapped[str | None] = mapped_column(String(500), unique=True)
     status: Mapped[DocumentStatus] = mapped_column(
         pg_enum(DocumentStatus, "document_status"), server_default=DocumentStatus.PROCESSING.value)
@@ -65,8 +62,6 @@ class Document(Base):
 
 
 class Section(Base):
-    """Heading tree of a document; level-1 sections are the TOPICS of the learner model."""
-
     __tablename__ = "section"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
@@ -102,9 +97,7 @@ class Chunk(CreatedAtMixin, Base):
         UniqueConstraint("section_id", "position", name="uq_chunk_section_position"),
         CheckConstraint("length(content) > 0", name="content_not_empty"),
         CheckConstraint("token_count BETWEEN 1 AND 2000", name="token_count_range"),
-        # Semantic search (cosine distance) — see docs/database.md, "Indexes".
         Index("ix_chunk_embedding_hnsw", "embedding", postgresql_using="hnsw",
               postgresql_ops={"embedding": "vector_cosine_ops"}),
-        # Keyword search fallback / hybrid retrieval.
         Index("ix_chunk_content_fts", text("to_tsvector('english', content)"), postgresql_using="gin"),
     )

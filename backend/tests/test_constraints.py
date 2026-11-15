@@ -1,5 +1,3 @@
-"""Integrity: constraints, deferred triggers, cascades (US-03), transactions."""
-
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError
@@ -85,8 +83,7 @@ def test_deleting_an_account_deletes_all_learning_data(conn, make, check):
 
 
 def test_answer_and_learner_model_are_one_transaction(conn, make, check):
-    """If the trigger fails, the answer is not stored either (all or nothing)."""
-    c = check(make.learner(), make.topic()).answers(True, True, True)   # closed
+    c = check(make.learner(), make.topic()).answers(True, True, True)
     before = scalar(conn, "SELECT count(*) FROM attempt WHERE quiz_id = :z", z=c.quiz)
     with pytest.raises(DBAPIError):
         with conn.begin_nested():

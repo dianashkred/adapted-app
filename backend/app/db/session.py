@@ -1,5 +1,3 @@
-"""Database engine and sessions. The application connects as the non-superuser role adapted_app."""
-
 from collections.abc import Iterator
 
 from sqlalchemy import create_engine
@@ -12,7 +10,6 @@ SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
 
 def get_session() -> Iterator[Session]:
-    """One request = one transaction: commit on success, roll back on any error."""
     with SessionLocal() as session:
         try:
             yield session

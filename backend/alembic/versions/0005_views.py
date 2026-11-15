@@ -11,7 +11,6 @@ branch_labels = None
 depends_on = None
 
 UPGRADE_SQL = r"""
--- Personal data never appears here: only the pseudonymous learner_id (random UUID).
 CREATE VIEW analytics.v_attempt AS
 SELECT a.id            AS attempt_id,
        a.learner_id,
@@ -47,7 +46,7 @@ SELECT q.id AS quiz_id, q.learner_id, l.experiment_mode, q.section_id AS topic_i
  WHERE q.kind = 'check'
  GROUP BY q.id, l.experiment_mode;
 
-CREATE VIEW analytics.v_answer_quality AS            -- KPI K1 and NFR-01/02
+CREATE VIEW analytics.v_answer_quality AS
 SELECT m.id AS message_id, cs.learner_id, l.experiment_mode, cs.section_id AS topic_id,
        m.model, m.latency_ms, m.prompt_tokens, m.completion_tokens, m.max_similarity, m.is_refusal,
        (SELECT count(*) FROM message_source ms WHERE ms.message_id = m.id) AS sources_count,
@@ -57,7 +56,7 @@ SELECT m.id AS message_id, cs.learner_id, l.experiment_mode, cs.section_id AS to
   JOIN learner l ON l.id = cs.learner_id
  WHERE m.role = 'assistant';
 
-CREATE VIEW analytics.v_test_result AS               -- KPI K3: pre-test vs post-test
+CREATE VIEW analytics.v_test_result AS
 SELECT q.learner_id, l.experiment_mode, q.kind AS test_kind,
        count(a.id) AS answered, count(a.id) FILTER (WHERE a.is_correct) AS correct, q.ended_at
   FROM quiz q
@@ -66,7 +65,6 @@ SELECT q.learner_id, l.experiment_mode, q.kind AS test_kind,
  WHERE q.kind IN ('pre_test', 'post_test')
  GROUP BY q.id, l.experiment_mode;
 
--- Summary per experiment mode; refreshed by the analyst before an export.
 CREATE MATERIALIZED VIEW analytics.mv_check_summary AS
 SELECT coalesce(experiment_mode::text, 'not_participant') AS experiment_mode,
        count(*)                                       AS checks,
@@ -84,7 +82,6 @@ SET search_path = analytics, public AS $$
 $$;
 GRANT EXECUTE ON FUNCTION analytics.refresh_summaries() TO analytics_read;
 
--- Admin screen: accounts without readable personal data (e-mail stays encrypted; hash shortened).
 CREATE VIEW account_masked AS
 SELECT a.id AS account_id, l.id AS learner_id, a.role,
        left(a.email_hash, 8) || '…' AS email_hash_short,

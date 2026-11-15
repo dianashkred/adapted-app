@@ -1,6 +1,3 @@
--- Reference (fixed) data of AdaptED. Idempotent: safe to run again after a change.
--- Loaded by migration 0004 and by `python -m scripts.seed_reference`.
-
 INSERT INTO privacy_notice (version, published_on, summary) VALUES
   ('1.0', DATE '2026-11-01', 'First Privacy Notice: data processed for learning and for the anonymised diploma experiment (GDPR Art. 6(1)(a)).')
 ON CONFLICT (version) DO UPDATE SET published_on = EXCLUDED.published_on, summary = EXCLUDED.summary;

@@ -1,5 +1,3 @@
-"""AdaptED API. Stage 1 (database): only the health check. The API of epics E1–E8 comes in stage 2."""
-
 from fastapi import FastAPI
 from sqlalchemy import text
 

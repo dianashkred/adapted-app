@@ -1,5 +1,3 @@
-"""Topic knowledge check: max 6 questions, first Intermediate, early end rules, US-11 outcome."""
-
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
@@ -50,14 +48,12 @@ def test_error_on_advanced_goes_back_to_intermediate(make, check):
 
 
 def test_limit_with_last_two_correct_is_mastered_by_us11(make, check):
-    # 4/6 = 66.7 % < 75 %, but the last two answers are correct at Intermediate/Advanced (US-11)
     c = check(make.learner(), make.topic()).answers(True, False, True, False, True, True)
     assert tuple(c.quiz_row) == ("completed", "mastered", "question_limit")
 
 
 def test_limit_below_75_percent_is_gap(make, check):
     c = check(make.learner(), make.topic()).answers(True, False, True, True, False, True)
-    # levels: I(c) A(w) I(c) A(c) A(w) I(c): last two = (wrong, correct) -> 4/6 -> gap
     assert tuple(c.quiz_row) == ("completed", "gap", "question_limit")
 
 
@@ -76,7 +72,7 @@ def test_stop_after_one_answer_is_not_checked(conn, make, check):
 
 
 def test_stop_after_three_answers_uses_us11(conn, make, check):
-    c = check(make.learner(), make.topic()).answers(True, False, True)   # 2/3 = 66 %, last two = (wrong, correct)
+    c = check(make.learner(), make.topic()).answers(True, False, True)
     assert scalar(conn, "SELECT stop_check(:q)", q=c.quiz) == "gap"
     assert tuple(c.quiz_row) == ("completed", "gap", "stopped_by_learner")
 

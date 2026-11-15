@@ -1,5 +1,4 @@
-"""Reference/demo seeds on the test database; protection of e-mail addresses."""
-
+from cryptography.fernet import Fernet
 from sqlalchemy import text
 
 from app.core import crypto
@@ -18,7 +17,7 @@ def test_reference_seed_is_idempotent(migrator_engine):
 def test_demo_seed_runs_and_covers_edge_cases(app_engine, migrator_engine):
     s = get_settings()
     seed_demo.main(s.test_database_url)
-    seed_demo.main(s.test_database_url)       # second run does nothing
+    seed_demo.main(s.test_database_url)
     try:
         with app_engine.connect() as c:
             reasons = set(c.execute(text("SELECT end_reason::text FROM quiz WHERE kind = 'check' AND end_reason IS NOT NULL")).scalars())
@@ -26,7 +25,6 @@ def test_demo_seed_runs_and_covers_edge_cases(app_engine, migrator_engine):
             statuses = set(c.execute(text("SELECT status::text FROM document")).scalars())
             assert statuses == {"ready", "processing", "failed"}
             assert c.execute(text("SELECT count(*) FROM account")).scalar_one() == 6
-            # decision 0002
             assert set(c.execute(text("SELECT DISTINCT confidence::text FROM attempt WHERE confidence IS NOT NULL")).scalars()) \
                 == {"sure", "not_sure", "guessing"}
             assert c.execute(text("SELECT count(*) FILTER (WHERE resolved_at IS NULL) > 0 AND count(*) FILTER (WHERE resolved_at IS NOT NULL) > 0 "
@@ -36,10 +34,9 @@ def test_demo_seed_runs_and_covers_edge_cases(app_engine, migrator_engine):
                 == {"topic_quiz", "revision"}
             assert c.execute(text("SELECT count(*) FROM learner WHERE ui_theme = 'dark' AND NOT revision_reminders")).scalar_one() == 1
             assert c.execute(text("SELECT count(*) FROM learner WHERE is_simulated AND account_id IS NULL")).scalar_one() == 3
-            # mode A: confidence stored, no review list
             assert c.execute(text("""SELECT count(*) FROM review_item r JOIN learner l ON l.id = r.learner_id
                                       WHERE l.experiment_mode = 'plain_rag'""")).scalar_one() == 0
-        with migrator_engine.connect() as m:            # analytics as the schema owner
+        with migrator_engine.connect() as m:
             m.execute(text("SET ROLE admin"))
             result = dict(m.execute(text("SELECT result, count(*) FROM analytics.v_gap_detection GROUP BY result")).all())
             assert result == {"TP": 1, "FP": 1, "FN": 1, "TN": 9}
@@ -50,7 +47,6 @@ def test_demo_seed_runs_and_covers_edge_cases(app_engine, migrator_engine):
             m.commit()
     finally:
         with app_engine.connect() as c:
-            # clean up so other tests and test sessions start from an empty database
             c.execute(text("DELETE FROM course WHERE owner_account_id IS NULL"))
             c.execute(text("DELETE FROM account"))
             c.execute(text("DELETE FROM learner WHERE is_simulated"))
@@ -58,7 +54,7 @@ def test_demo_seed_runs_and_covers_edge_cases(app_engine, migrator_engine):
 
 
 def test_email_encryption_round_trip():
-    key = "QXGZ3Q2s3pJ6vq0n7wHk2C9sY8lq0vW1dVq3x5Yp0aQ="
+    key = Fernet.generate_key().decode()
     token = crypto.encrypt_email(" Diana@Example.com ", key)
     assert b"diana" not in token
     assert crypto.decrypt_email(token, key) == "diana@example.com"
