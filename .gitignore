@@ -1,0 +1,43 @@
+# Secrets: never commit real settings
+.env
+.env.*
+!.env.example
+*.env.local
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+
+# Tests and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Frontend (stage 3)
+node_modules/
+dist/
+build/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and local dumps
+*.log
+*.dump
+
+# Personal Claude Code settings (the shared .claude/settings.json stays)
+.claude/settings.local.json
+CLAUDE.md
+PROJECT_CONTEXT.md
+STACK.md
+.claude/
